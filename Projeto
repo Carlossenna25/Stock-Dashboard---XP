@@ -1,0 +1,680 @@
+---
+title: "Stock Dashboard - 7RD"
+format: 
+  dashboard:
+    nav-buttons: [github]
+    github: https://github.com/Carlossenna25/Stock-Dashboard---XP.git
+logo: xp.jpg
+theme: [lux, theme/custom.scss]
+fig-width: 10
+fig-asp: 0.3
+params:
+  month: "Julho"
+  year: "2024"
+editor_options: 
+  chunk_output_type: console
+---
+
+{r}
+#| label: load-packages
+#| message: false
+
+library(tidyverse)
+library(readxl)
+library(scales)
+library(DT)
+library(quantmod)
+library(gt)
+theme_set(theme_minimal(base_size = 20, base_family = "Atkinson Hyperlegible"))
+
+{r}
+banks_stock_data <- function(symbol, from = "2023-01-01") {
+  stock_data <- getSymbols(symbol, src = "yahoo", from = from, auto.assign = FALSE)
+  stock_data <- data.frame(Date = index(stock_data), coredata(stock_data))
+    num_cols <- ncol(stock_data)
+  if (num_cols == 6) {
+    colnames(stock_data) <- c("Date", "Open", "High", "Low", "Close", "Volume")
+    stock_data$Adjusted <- stock_data$Close
+  } else if (num_cols == 7) {
+    colnames(stock_data) <- c("Date", "Open", "High", "Low", "Close", "Volume", "Adjusted")
+  } else {
+    stop(paste("Unexpected number of columns in stock data:", num_cols))
+  }
+  return(stock_data)
+}
+
+{r}
+#| label: set-inputs
+
+time_period <- paste(params$month, params$year)
+
+{r}
+symbols <- c("BBDC4.SA", "ITSA4.SA", "ITUB4.SA")
+
+{r}
+stock_data_list <- lapply(symbols, function(symbol) {
+  stock_data <- banks_stock_data(symbol)
+  
+  stock_data <- stock_data |>
+    mutate(
+      Symbol = symbol,
+      price_category = case_when(
+        Adjusted < 10 ~ "Low",
+        Adjusted >= 15 & Adjusted < 20 ~ "Medium",
+        Adjusted >= 20 ~ "High"
+      ),
+      price_category = fct_relevel(price_category, "Low", "Medium", "High"),
+      
+      day_of_week = weekdays(Date),
+      day_of_week = fct_relevel(day_of_week, 
+                                "Monday", "Tuesday", "Wednesday", 
+                                "Thursday", "Friday")
+    )
+  
+  return(stock_data)
+})
+
+combined <- bind_rows(stock_data_list)
+
+#  {.sidebar}
+
+Este dashboard exibe estatísticas para:
+
+|                |                     |
+|----------------|---------------------|
+| **Escritório** | 7RD Investimentos   |
+| **Unidade**    | Natal- RN           |
+| **Mês**        | {r} time_period   |
+
+------------------------------------------------------------------------
+
+Em {r} time_period a distribuição do pessoal na unidade era a seguinte:
+
+|                                  |     |
+|----------------------------------|-----|
+| **Assessores - Administrativos** |  2  |
+| **Assessores - Comerciais**      |  6  |
+| **Assessores - Mesa**            |  5  |
+| **Executivo**                    |  1  |
+| **Assessores - Total**           |  14 |
+------------------------------------------------------------------------
+
+# All
+
+{r}
+#| label: all-values
+#| results: hide
+
+total_volume <- sum(combined_stock_data$Volume, na.rm = TRUE)
+
+daily_change <- combined_stock_data |>
+  mutate(DailyChange = Close - Open) |>
+  summarise(mean_change = mean(DailyChange, na.rm = TRUE)) |>
+  pull(mean_change)
+
+volatility <- combined_stock_data |>
+  summarise(volatility = sd(Close, na.rm = TRUE)) |>
+  pull(volatility)
+
+## Row {height="20%"}
+
+'''{r}
+#| label: all-values
+#| results: hide
+
+total_volume <- sum(combined$Volume, na.rm = TRUE)
+
+daily_change <- combined |>
+  mutate(DailyChange = Close - Open) |>
+  summarise(mean_change = mean(DailyChange, na.rm = TRUE)) |>
+  pull(mean_change)
+
+volatility <- combined |>
+  summarise(volatility = sd(Close, na.rm = TRUE)) |>
+  pull(volatility)
+
+## Row {height="20%"}
+
+'''{r}
+{r}
+#| content: valuebox
+#| title: "Total Volume"
+
+list(
+  icon = "chart-bar",
+  color = "primary",
+  value = scales::comma(total_volume)
+)
+
+'''{r}
+{r}
+#| content: valuebox
+#| title: "Average Daily Change"
+
+list(
+  icon = "exchange-alt",
+  color = "info",
+  value = scales::dollar(daily_change, accuracy = 0.01)
+)
+
+'''{r}
+{r}
+#| content: valuebox
+#| title: "Period Volatility"
+
+list(
+  icon = "bolt",
+  color = "warning",
+  value = scales::percent(volatility / mean(combined$Close, na.rm = TRUE), accuracy = 0.1)
+)
+
+## Row {height="40%"}
+
+### Column {width="40%"}
+
+{r} 
+dividend_list <- lapply(symbols, function(sym) {
+  getDividends(sym, from = "2023-01-01", to = Sys.Date(), auto.assign = FALSE)
+})
+
+dividend_data <- do.call(rbind, lapply(seq_along(dividend_list), function(i) {
+  data.frame(
+    date = index(dividend_list[[i]]),
+    dividend = coredata(dividend_list[[i]]),
+    symbol = symbols[i]
+  )
+}))
+
+{r} 
+dividend_summary <- dividend_data %>%
+  group_by(symbol) %>%
+  summarise(total_dividend = sum(dividend, na.rm = TRUE)) %>%
+  mutate(p = total_dividend / sum(total_dividend))
+
+{r} 
+dividend_table <- dividend_summary %>%
+  gt() %>%
+  fmt_percent(
+    columns = p,
+    decimals = 1
+  ) %>%
+  tab_style(
+    style = cell_text(color = "#ae8b2d", weight = "bold"),
+    locations = cells_body(
+      columns = everything(),
+      rows = symbol == "BBDC4.SA"
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(color = "#0e2635", weight = "bold"),
+    locations = cells_body(
+      columns = everything(),
+      rows = symbol == "ITSA4.SA"
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(color = "#4CAF50", weight = "bold"),
+    locations = cells_body(
+      columns = everything(),
+      rows = symbol == "ITUB4.SA"
+    )
+  ) %>%
+  cols_label(
+    symbol = "",
+    total_dividend = "Total Dividend",
+    p = "Proportion of Dividends"
+  )
+
+{r} 
+# Exibir a tabela 
+dividend_table
+---
+title: "Stock Dashboard - 7RD"
+format: 
+  dashboard:
+    nav-buttons: [github]
+    github: https://github.com/Carlossenna25/Stock-Dashboard---XP.git
+logo: xp.jpg
+theme: [lux, theme/custom.scss]
+fig-width: 10
+fig-asp: 0.3
+params:
+  month: "Julho"
+  year: "2024"
+editor_options: 
+  chunk_output_type: console
+---
+
+{r}
+#| label: load-packages
+#| message: false
+
+library(tidyverse)
+library(readxl)
+library(scales)
+library(DT)
+library(quantmod)
+library(gt)
+theme_set(theme_minimal(base_size = 20, base_family = "Atkinson Hyperlegible"))
+
+{r}
+banks_stock_data <- function(symbol, from = "2023-01-01") {
+  stock_data <- getSymbols(symbol, src = "yahoo", from = from, auto.assign = FALSE)
+  stock_data <- data.frame(Date = index(stock_data), coredata(stock_data))
+    num_cols <- ncol(stock_data)
+  if (num_cols == 6) {
+    colnames(stock_data) <- c("Date", "Open", "High", "Low", "Close", "Volume")
+    stock_data$Adjusted <- stock_data$Close
+  } else if (num_cols == 7) {
+    colnames(stock_data) <- c("Date", "Open", "High", "Low", "Close", "Volume", "Adjusted")
+  } else {
+    stop(paste("Unexpected number of columns in stock data:", num_cols))
+  }
+  return(stock_data)
+}
+
+{r}
+#| label: set-inputs
+
+time_period <- paste(params$month, params$year)
+
+{r}
+symbols <- c("BBDC4.SA", "ITSA4.SA", "ITUB4.SA")
+
+{r}
+stock_data_list <- lapply(symbols, function(symbol) {
+  stock_data <- banks_stock_data(symbol)
+  
+  stock_data <- stock_data |>
+    mutate(
+      Symbol = symbol,
+      price_category = case_when(
+        Adjusted < 10 ~ "Low",
+        Adjusted >= 15 & Adjusted < 20 ~ "Medium",
+        Adjusted >= 20 ~ "High"
+      ),
+      price_category = fct_relevel(price_category, "Low", "Medium", "High"),
+      
+      day_of_week = weekdays(Date),
+      day_of_week = fct_relevel(day_of_week, 
+                                "Monday", "Tuesday", "Wednesday", 
+                                "Thursday", "Friday")
+    )
+  
+  return(stock_data)
+})
+
+combined <- bind_rows(stock_data_list)
+
+#  {.sidebar}
+
+Este dashboard exibe estatísticas para:
+
+|                |                     |
+|----------------|---------------------|
+| **Escritório** | 7RD Investimentos   |
+| **Unidade**    | Natal- RN           |
+| **Mês**        | `{r} time_period`   |
+
+------------------------------------------------------------------------
+
+Em `{r} time_period` a distribuição do pessoal na unidade era a seguinte:
+
+|                                  |     |
+|----------------------------------|-----|
+| **Assessores - Administrativos** |  2  |
+| **Assessores - Comerciais**      |  6  |
+| **Assessores - Mesa**            |  5  |
+| **Executivo**                    |  1  |
+| **Assessores - Total**           |  14 |
+------------------------------------------------------------------------
+
+# All
+{r}
+#| label: all-values
+#| results: hide
+
+total_volume <- sum(combined_stock_data$Volume, na.rm = TRUE)
+
+daily_change <- combined_stock_data |>
+  mutate(DailyChange = Close - Open) |>
+  summarise(mean_change = mean(DailyChange, na.rm = TRUE)) |>
+  pull(mean_change)
+
+volatility <- combined_stock_data |>
+  summarise(volatility = sd(Close, na.rm = TRUE)) |>
+  pull(volatility)
+
+## Row {height="20%"}
+
+'''{r}
+#| label: all-values
+#| results: hide
+
+total_volume <- sum(combined$Volume, na.rm = TRUE)
+
+daily_change <- combined |>
+  mutate(DailyChange = Close - Open) |>
+  summarise(mean_change = mean(DailyChange, na.rm = TRUE)) |>
+  pull(mean_change)
+
+volatility <- combined |>
+  summarise(volatility = sd(Close, na.rm = TRUE)) |>
+  pull(volatility)
+
+## Row {height="20%"}
+
+'''{r}
+{r}
+#| content: valuebox
+#| title: "Total Volume"
+
+list(
+  icon = "chart-bar",
+  color = "primary",
+  value = scales::comma(total_volume)
+)
+
+'''{r}
+{r}
+#| content: valuebox
+#| title: "Average Daily Change"
+
+list(
+  icon = "exchange-alt",
+  color = "info",
+  value = scales::dollar(daily_change, accuracy = 0.01)
+)
+
+'''{r}
+{r}
+#| content: valuebox
+#| title: "Period Volatility"
+
+list(
+  icon = "bolt",
+  color = "warning",
+  value = scales::percent(volatility / mean(combined$Close, na.rm = TRUE), accuracy = 0.1)
+)
+
+## Row {height="40%"}
+
+### Column {width="40%"}
+
+{r}
+#| label: dividends-data
+
+dividends <- data.frame(
+  Symbol = c("BBDC4.SA", "ITSA4.SA", "ITUB4.SA"),
+  DividendDate = as.Date(c("2023-06-30", "2023-06-30", "2023-06-30")),
+  DividendAmount = c(0.15, 0.12, 0.18)
+)
+
+dividends %>%
+  gt() %>%
+  fmt_currency(
+    columns = DividendAmount,
+    currency = "BRL",
+    decimals = 2
+  ) %>%
+  tab_style(
+    style = cell_text(color = "#0e2635", weight = "bold"),
+    locations = cells_body(
+      columns = everything()
+    )
+  ) %>%
+  cols_label(
+    Symbol = "Ação",
+    DividendDate = "Data do Dividendo",
+    DividendAmount = "Valor do Dividendo"
+  )
+
+### Column {width="60%"}
+
+{r}
+#| label: stock-price-history
+
+combined_stock %>%
+  ggplot(aes(x = Date, y = Adjusted, color = Symbol, group = Symbol)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  labs(title = "Histórico de Preço das Ações",
+       x = "Data",
+       y = "Preço Ajustado",
+       color = "variable") +
+  theme_minimal(base_size = 12)
+
+## Row {height="40%"}
+
+{r}
+#| label: volume-percentage
+
+combined_stock %>%
+  group_by(Symbol) %>%
+  summarise(total_volume = sum(Volume, na.rm = TRUE)) %>%
+  mutate(percentage_volume = total_volume / sum(total_volume)) %>%
+  ggplot(aes(x = Symbol, y = percentage_volume, fill = Symbol)) +
+  geom_col(color = "white") +
+  geom_text(aes(label = scales::percent(percentage_volume, accuracy = 0.1)), 
+            position = position_stack(vjust = 0.5), 
+            color = "white", size = 5) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Percentual de Volume Negociado por Ação",
+       x = NULL,
+       y = "Percentual de Volume",
+       fill = "Ação") +
+  theme_minimal(base_size = 15)
+
+{r}
+#| label: closing-price-stacked
+
+combined_stock %>%
+  ggplot(aes(x = Date, y = Close, fill = Symbol)) +
+  geom_col(position = "fill", color = "white") +
+  scale_fill_manual(values = c("#ae8b2d", "#0e2635", "#4daf4a"), guide = guide_legend(reverse = TRUE)) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Preço de Fechamento das Ações",
+       x = "Data",
+       y = "Percentual do Fechamento",
+       fill = "Ação") +
+  theme_minimal(base_size = 15)
+
+# ITUB4 {orientation="columns"}
+
+## Column {width="60%"}
+
+{r}
+latest_closing_price <- combined_stock %>%
+  filter(Symbol == "ITUB4.SA") %>%
+  select(Close) %>%
+  tail(1) %>%
+  pull()
+
+mean_daily_change <- combined_stock %>%
+  filter(Symbol == "ITUB4.SA") %>%
+  mutate(DailyChange = Close - Open) %>%
+  summarise(mean_change = mean(DailyChange, na.rm = TRUE)) %>%
+  pull(mean_change)
+
+  ### Row {height="20%"}
+
+{r}
+value_box(
+  title = "Total Volume",
+  value = scales::dollar(latest_closing_price, accuracy = 0.01),
+  showcase = bsicons::bs_icon("volume-up"),
+  color = "primary"
+)
+
+{r}
+value_box(
+  title = "Mean Daily Change",
+  value = scales::dollar(mean_daily_change, accuracy = 0.01),
+  showcase = bsicons::bs_icon("currency-dollar"),
+  color = "primary"
+)
+
+### Row {height="40%"}
+
+{r}
+#| label: itub4-candlestick
+# Gráfico de velas para ITUB4.SA usando plotly
+
+itub4_data <- combined_stock %>%
+  filter(Symbol == "ITUB4.SA")
+
+fig <- plot_ly(itub4_data, x = ~Date, type = "candlestick",
+               open = ~Open, high = ~High, low = ~Low, close = ~Close,
+               name = "ITUB4.SA")
+
+fig <- fig %>% layout(title = "Price History ITUB4.SA",
+                      xaxis = list(title = "Data"),
+                      yaxis = list(title = "Preço"))
+
+fig
+
+### Row {height="40%" .tabset}
+
+{r}
+#| title: Preço Minímo (Low)
+
+itub4_data %>%
+  ggplot(aes(x = Date, y = Low, color = Symbol)) +
+  geom_line(size = 1.2) +
+  labs(title = "Histórico do Preço Minímo das Ações",
+       x = "Data",
+       y = "Preço Minímo",
+       color = "Ação") +
+  theme_minimal(base_size = 15)
+
+  {r}
+#| title: Preço Máximo (High)
+
+itub4_data %>%
+  ggplot(aes(x = Date, y = High, color = Symbol)) +
+  geom_line(size = 1.2) +
+  labs(title = "Histórico do Preço Máximo das Ações",
+       x = "Data",
+       y = "Preço Máximo",
+       color = "Ação") +
+  theme_minimal(base_size = 15)
+
+## Column {width="40%"}
+
+  {r}
+#| title: ITUB4 Data
+
+itub4_data %>%
+  mutate(across(where(is.numeric), ~ round(., 2))) %>%
+  datatable(
+    options = list(
+      dom = "lrtip",
+      paging = TRUE,
+      lengthMenu = c(5, 10, 25),
+      pageLength = 10,
+      scrollY = TRUE
+    )
+  )
+
+# BBDC4 {orientation="columns"}
+
+## Column {width="60%"}
+
+{r}
+latest_closing_price <- combined_stock %>%
+  filter(Symbol == "BBDC4.SA") %>%
+  select(Close) %>%
+  tail(1) %>%
+  pull()
+
+mean_daily_change <- combined_stock %>%
+  filter(Symbol == "BBDC4.SA") %>%
+  mutate(DailyChange = Close - Open) %>%
+  summarise(mean_change = mean(DailyChange, na.rm = TRUE)) %>%
+  pull(mean_change)
+
+  ### Row {height="20%"}
+
+{r}
+value_box(
+  title = "Total Volume",
+  value = scales::dollar(latest_closing_price, accuracy = 0.01),
+  showcase = bsicons::bs_icon("volume-up"),
+  color = "primary"
+)
+
+{r}
+value_box(
+  title = "Mean Daily Change",
+  value = scales::dollar(mean_daily_change, accuracy = 0.01),
+  showcase = bsicons::bs_icon("currency-dollar"),
+  color = "primary"
+)
+
+ ### Row {height="40%"}
+
+{r}
+#| label: itub4-candlestick
+# Gráfico de velas para ITUB4.SA usando plotly
+
+itub4_data <- combined_stock %>%
+  filter(Symbol == "ITUB4.SA")
+
+fig <- plot_ly(itub4_data, x = ~Date, type = "candlestick",
+               open = ~Open, high = ~High, low = ~Low, close = ~Close,
+               name = "ITUB4.SA")
+
+fig <- fig %>% layout(title = "Price History ITUB4.SA",
+                      xaxis = list(title = "Data"),
+                      yaxis = list(title = "Preço"))
+
+fig
+
+### Row {height="40%" .tabset}
+
+{r}
+#| title: Preço Minímo (Low)
+
+itub4_data %>%
+  ggplot(aes(x = Date, y = Low, color = Symbol)) +
+  geom_line(size = 1.2) +
+  labs(title = "Histórico do Preço Minímo das Ações",
+       x = "Data",
+       y = "Preço Minímo",
+       color = "Ação") +
+  theme_minimal(base_size = 15)
+
+  {r}
+#| title: Preço Máximo (High)
+
+itub4_data %>%
+  ggplot(aes(x = Date, y = High, color = Symbol)) +
+  geom_line(size = 1.2) +
+  labs(title = "Histórico do Preço Máximo das Ações",
+       x = "Data",
+       y = "Preço Máximo",
+       color = "Ação") +
+  theme_minimal(base_size = 15)
+
+## Column {width="40%"}
+
+  {r}
+#| title: ITUB4 Data
+
+itub4_data %>%
+  mutate(across(where(is.numeric), ~ round(., 2))) %>%
+  datatable(
+    options = list(
+      dom = "lrtip",
+      paging = TRUE,
+      lengthMenu = c(5, 10, 25),
+      pageLength = 10,
+      scrollY = TRUE
+    )
+  )
+
+# BBDC4 {orientation="columns"}
+
+## Column {width="60%"}
+
+
